@@ -366,7 +366,7 @@ fetchFeed session feedTabs page =
 
 articlesPerPage : Int
 articlesPerPage =
-    10
+    5
 
 
 scrollToTop : Task x ()
