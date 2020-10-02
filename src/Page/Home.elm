@@ -3,6 +3,7 @@ module Page.Home exposing (Model, Msg, init, subscriptions, toSession, update, v
 {-| The homepage. You can get here via either the / or /#/ routes.
 -}
 
+import Html exposing (Html, Attribute, div, input, text)
 import Api exposing (Cred)
 import Api.Endpoint as Endpoint
 import Article exposing (Article, Preview)
@@ -10,8 +11,8 @@ import Article.Feed as Feed
 import Article.Tag as Tag exposing (Tag)
 import Browser.Dom as Dom
 import Html exposing (..)
-import Html.Attributes exposing (attribute, class, classList, href, id, placeholder)
-import Html.Events exposing (onClick)
+import Html.Attributes exposing (attribute, class, classList, href, id, placeholder, value, style)
+import Html.Events exposing (onClick, onInput)
 import Http
 import Loading
 import Log
@@ -33,6 +34,7 @@ type alias Model =
     , timeZone : Time.Zone
     , feedTab : FeedTab
     , feedPage : Int
+    , searchValue: String
 
     -- Loaded independently from server
     , tags : Status (List Tag)
@@ -51,6 +53,7 @@ type FeedTab
     = YourFeed Cred
     | GlobalFeed
     | TagFeed Tag
+    | SearchFeed
 
 
 init : Session -> ( Model, Cmd Msg )
@@ -73,9 +76,10 @@ init session =
       , feedPage = 1
       , tags = Loading
       , feed = Loading
+      , searchValue = ""
       }
     , Cmd.batch
-        [ fetchFeed session feedTab 1
+        [ fetchFeed session feedTab 1 ""
             |> Task.attempt CompletedFeedLoad
         , Tag.list
             |> Http.send CompletedTagsLoad
@@ -88,6 +92,15 @@ init session =
 
 -- VIEW
 
+viewSearch : FeedTab -> String -> Html Msg
+viewSearch feedTab searchValue =
+    if feedTab == SearchFeed then
+        div [style "display" "flex",  style "padding" "20px 0",  style "width" "100%",  style "justify-content" "center"][
+        input[ placeholder "Search by tag", value searchValue, onInput ChangeSearch, class "form-control", style "width" "auto", style "flex" "8" ][]
+        , button [ onClick ClickedSearch, class "btn btn-primary", style "marginLeft" "10px", style "flex" "1"  ] [ text "search" ]
+        ]
+    else 
+        div[][]
 
 view : Model -> { title : String, content : Html Msg }
 view model =
@@ -106,6 +119,8 @@ view model =
                                                 (Session.cred model.session)
                                                 model.feedTab
                                           ]
+                                        , [viewSearch model.feedTab model.searchValue]
+                                            
                                         , Feed.viewArticles model.timeZone feed
                                             |> List.map (Html.map GotFeedMsg)
                                         , [ Feed.viewPagination ClickedFeedPage model.feedPage feed ]
@@ -161,7 +176,7 @@ viewTabs : Maybe Cred -> FeedTab -> Html Msg
 viewTabs maybeCred tab =
     case tab of
         YourFeed cred ->
-            Feed.viewTabs [] (yourFeed cred) [ globalFeed ]
+            Feed.viewTabs [] (yourFeed cred) [ globalFeed, searchFeed ]
 
         GlobalFeed ->
             let
@@ -173,9 +188,21 @@ viewTabs maybeCred tab =
                         Nothing ->
                             []
             in
-            Feed.viewTabs otherTabs globalFeed []
+            Feed.viewTabs otherTabs globalFeed [searchFeed]
 
         TagFeed tag ->
+            let
+                otherTabs =
+                    case maybeCred of
+                        Just cred ->
+                            [ yourFeed cred, globalFeed, searchFeed ]
+
+                        Nothing ->
+                            [ globalFeed, searchFeed ]
+            in
+            Feed.viewTabs otherTabs (tagFeed tag) []
+
+        SearchFeed ->
             let
                 otherTabs =
                     case maybeCred of
@@ -185,7 +212,7 @@ viewTabs maybeCred tab =
                         Nothing ->
                             [ globalFeed ]
             in
-            Feed.viewTabs otherTabs (tagFeed tag) []
+            Feed.viewTabs otherTabs searchFeed []
 
 
 yourFeed : Cred -> ( String, Msg )
@@ -202,6 +229,9 @@ tagFeed : Tag -> ( String, Msg )
 tagFeed tag =
     ( "#" ++ Tag.toString tag, ClickedTab (TagFeed tag) )
 
+searchFeed: (String, Msg)
+searchFeed  =
+    ("Search feed", ClickedTab SearchFeed)
 
 
 -- TAGS
@@ -248,6 +278,8 @@ type Msg
     | GotFeedMsg Feed.Msg
     | GotSession Session
     | PassedSlowLoadThreshold
+    | ChangeSearch String
+    | ClickedSearch
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -259,19 +291,19 @@ update msg model =
                     TagFeed tag
             in
             ( { model | feedTab = feedTab }
-            , fetchFeed model.session feedTab 1
+            , fetchFeed model.session feedTab 1 ""
                 |> Task.attempt CompletedFeedLoad
             )
 
         ClickedTab tab ->
             ( { model | feedTab = tab }
-            , fetchFeed model.session tab 1
+            , fetchFeed model.session tab 1 ""
                 |> Task.attempt CompletedFeedLoad
             )
 
         ClickedFeedPage page ->
             ( { model | feedPage = page }
-            , fetchFeed model.session model.feedTab page
+            , fetchFeed model.session model.feedTab page ""
                 |> Task.andThen (\feed -> Task.map (\_ -> feed) scrollToTop)
                 |> Task.attempt CompletedFeedLoad
             )
@@ -337,14 +369,24 @@ update msg model =
                             other
             in
             ( { model | feed = feed, tags = tags }, Cmd.none )
+        
+        ChangeSearch newSearchValue -> 
+            ( { model | searchValue = newSearchValue }, Cmd.none )
+
+        ClickedSearch ->
+            ( { model | searchValue = "", feedPage = 1 }
+            , fetchFeed model.session model.feedTab model.feedPage model.searchValue
+                |> Task.andThen (\feed -> Task.map (\_ -> feed) scrollToTop)
+                |> Task.attempt CompletedFeedLoad
+            )
 
 
 
 -- HTTP
 
 
-fetchFeed : Session -> FeedTab -> Int -> Task Http.Error Feed.Model
-fetchFeed session feedTabs page =
+fetchFeed : Session -> FeedTab -> Int -> String -> Task Http.Error Feed.Model
+fetchFeed session feedTabs page searchValue=
     let
         maybeCred =
             Session.cred session
@@ -367,6 +409,13 @@ fetchFeed session feedTabs page =
                     let
                         firstParam =
                             Url.Builder.string "tag" (Tag.toString tag)
+                    in
+                    Api.get (Endpoint.articles (firstParam :: params)) maybeCred decoder
+                
+                SearchFeed ->
+                    let
+                        firstParam =
+                            Url.Builder.string "tag" searchValue
                     in
                     Api.get (Endpoint.articles (firstParam :: params)) maybeCred decoder
     in
