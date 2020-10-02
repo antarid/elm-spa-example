@@ -7,7 +7,7 @@ import Article.Tag as Tag exposing (Tag)
 import Author
 import Avatar exposing (Avatar)
 import Html exposing (..)
-import Html.Attributes exposing (attribute, class, classList, href, id, placeholder, src)
+import Html.Attributes exposing (attribute, class, classList, href, id, placeholder, src, style)
 import Html.Events exposing (onClick)
 import Http
 import Json.Decode as Decode exposing (Decoder)
@@ -82,8 +82,11 @@ viewArticles timeZone (Model { articles, session, errors }) =
             Session.cred session
 
         articlesHtml =
+            if PaginatedList.total articles > 0 then
             PaginatedList.values articles
                 |> List.map (viewPreview maybeCred timeZone)
+            else
+                [div [style "width" "100%", style "display" "flex", style "height" "500px", style "justify-content" "center", style "align-items" "center"] [text "NO ARTICLES..."]]
     in
     Page.viewErrors ClickedDismissErrors errors :: articlesHtml
 
