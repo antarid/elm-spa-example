@@ -206,10 +206,20 @@ tagFeed tag =
 
 -- TAGS
 
+isNotEmptyChar: Char -> Bool
+isNotEmptyChar char =
+    char /= '\u{200C}'
+
+isNotEmptyTag: Tag -> Bool
+isNotEmptyTag tag =
+    Tag.toString tag 
+        |> String.filter isNotEmptyChar
+        |> String.isEmpty
+        |> not  
 
 viewTags : List Tag -> Html Msg
 viewTags tags =
-    div [ class "tag-list" ] (List.map viewTag tags)
+    div [ class "tag-list" ] (List.map viewTag <| List.filter isNotEmptyTag tags)
 
 
 viewTag : Tag -> Html Msg
